@@ -1,8 +1,11 @@
+# Requirements:
+# sudo apt-get install libreadline-dev 
+
 CC= clang
 RM= rm -f
 
 CFLAGS= -Wall -Wextra -Werror -pedantic -std=c11 -ggdb
-LIBS= -lm
+LIBS= -lm -lreadline
 
 SRC= src/lisp.c
 
