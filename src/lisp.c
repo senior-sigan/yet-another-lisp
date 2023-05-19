@@ -5,9 +5,49 @@
 #include <stdlib.h>
 #include <string.h>
 
+// The size of the heap in byte
+#define MEMORY_SIZE 65536
+
 typedef struct {
-  int nop;
+  void* memory;
+  size_t offset;
+} VM;
+
+static VM* vm = &(VM){.offset = 0};
+
+enum {
+  TNIL = 0,
+  TINT = 1,
+  TFLOAT,
+  TTRUE,
+  TCPAREN,
+};
+
+typedef struct {
+  int type;
+  union {
+    long i_value;
+    double f_value;
+  };
 } Token;
+
+Token* True = &(Token){.type = TTRUE};
+Token* Nil = &(Token){.type = TNIL};
+Token* Cparen = &(Token){.type = TCPAREN};
+
+// void gc(VM* vm) {
+// TODO: see http://en.wikipedia.org/wiki/Cheney%27s_algorithm
+// }
+
+Token* alloc(VM* vm) {
+  size_t size = sizeof(Token);
+  // TODO: roundup and calculate size of the struct
+
+  Token* token = (void*) ((char*) vm->memory + vm->offset);
+  vm->offset += size;
+
+  return token;
+}
 
 typedef struct {
   size_t idx;
@@ -34,7 +74,6 @@ void Lex_next(LexState* lex) {
 }
 
 void Lex_next_line(LexState* lex) {
-  puts("BUM");
   lex->line_idx = 0;
   lex->line += 1;
   lex->idx += 1;
@@ -102,16 +141,23 @@ Token* read_number(LexState* lex, int sign) {
     return NULL;
   }
   memcpy(literal, lex->text + start, length);
+
+  Token* token = alloc(vm);
   if (dot_was_read) {
     double num = atof(literal) * sign;
+    token->type = TFLOAT;
+    token->f_value = num;
     printf("FLOAT %lf\n", num);
   } else {
     long num = atol(literal) * sign;
+    token->type = TINT;
+    token->i_value = num;
     printf("INT %ld\n", num);
   }
   free(literal);
   // TODO: return a number token
-  return NULL;
+
+  return token;
 }
 
 Token* read_minus(LexState* lex) {
@@ -145,8 +191,7 @@ Token* read_expr(LexState* lex) {
         skip_line(lex);
         break;
       case '-':
-        read_minus(lex);
-        break;
+        return read_minus(lex);
       case '0':
       case '1':
       case '2':
@@ -157,8 +202,7 @@ Token* read_expr(LexState* lex) {
       case '7':
       case '8':
       case '9':
-        read_number(lex, 1);
-        break;
+        return read_number(lex, 1);
       default:
         printf("UNKNOWN token: %c\n", ch);
         Lex_next(lex);
@@ -167,11 +211,24 @@ Token* read_expr(LexState* lex) {
   }
 }
 
+void print_token(const Token* token) {
+  switch (token->type) {
+    case TINT:
+      printf("%ld\n", token->i_value);
+      break;
+    case TFLOAT:
+      printf("%lf\n", token->f_value);
+      break;
+  }
+}
+
 int main(void) {
+  vm->memory = malloc(MEMORY_SIZE);
   const char* text = "(+ 14  2\n  (* 3. 9.7) -1 -3.14)";
   printf("======\n%s\n======\n", text);
   LexState lex = Lex_new(text);
-  read_expr(&lex);
+  print_token(read_expr(&lex));
+  free(vm->memory);
 
   return 0;
 }
