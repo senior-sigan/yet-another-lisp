@@ -64,14 +64,17 @@ void skip_line(LexState* lex) {
 bool is_space_like(char ch) {
   return ch == ' ' || ch == '\t' || ch == '\f' || ch == '\v' || ch == '\n' || ch == '\r' || ch == EOF;
 }
+bool is_number(char ch) {
+  return ch >= '0' && ch <= '9';
+}
 
-Token* read_number(LexState* lex) {
+Token* read_number(LexState* lex, int sign) {
   size_t start = lex->idx;
   size_t end = start;
   bool dot_was_read = false;
   for (;;) {
     const char ch = Lex_peek(lex);
-    if (ch >= '0' && ch <= '9') {
+    if (is_number(ch)) {
       // nothing to do
     } else if (ch == '.') {
       if (dot_was_read) {
@@ -96,17 +99,29 @@ Token* read_number(LexState* lex) {
   if (!literal) {
     // TODO: handle mem alloc failure
     fprintf(stderr, "Cannot allocate memory for literal\n");
+    return NULL;
   }
   memcpy(literal, lex->text + start, length);
   if (dot_was_read) {
-    double num = atof(literal);
+    double num = atof(literal) * sign;
     printf("FLOAT %lf\n", num);
   } else {
-    long num = atol(literal);
+    long num = atol(literal) * sign;
     printf("INT %ld\n", num);
   }
   free(literal);
   // TODO: return a number token
+  return NULL;
+}
+
+Token* read_minus(LexState* lex) {
+  Lex_next(lex);
+  char ch = Lex_peek(lex);
+  if (is_number(ch)) {
+    return read_number(lex, -1);
+  }
+  // TODO: read minus operator
+  fprintf(stderr, "Minus operator is unsupported\n");
   return NULL;
 }
 
@@ -129,6 +144,9 @@ Token* read_expr(LexState* lex) {
       case ';':  // start of the comment
         skip_line(lex);
         break;
+      case '-':
+        read_minus(lex);
+        break;
       case '0':
       case '1':
       case '2':
@@ -139,7 +157,7 @@ Token* read_expr(LexState* lex) {
       case '7':
       case '8':
       case '9':
-        read_number(lex);
+        read_number(lex, 1);
         break;
       default:
         printf("UNKNOWN token: %c\n", ch);
@@ -150,7 +168,7 @@ Token* read_expr(LexState* lex) {
 }
 
 int main(void) {
-  const char* text = "(+ 14  2\n  (* 3. 9.7))";
+  const char* text = "(+ 14  2\n  (* 3. 9.7) -1 -3.14)";
   printf("======\n%s\n======\n", text);
   LexState lex = Lex_new(text);
   read_expr(&lex);
