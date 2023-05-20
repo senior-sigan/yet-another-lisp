@@ -13,14 +13,13 @@ typedef struct {
   size_t offset;
 } VM;
 
-static VM* vm = &(VM){.offset = 0};
-
 enum {
   TNIL = 0,
   TINT = 1,
   TFLOAT,
   TTRUE,
   TCPAREN,
+  TLIST,
 };
 
 typedef struct {
@@ -31,9 +30,9 @@ typedef struct {
   };
 } Token;
 
-Token* True = &(Token){.type = TTRUE};
-Token* Nil = &(Token){.type = TNIL};
-Token* Cparen = &(Token){.type = TCPAREN};
+const Token* const True = &(Token){.type = TTRUE};
+const Token* const Nil = &(Token){.type = TNIL};
+const Token* const Cparen = &(Token){.type = TCPAREN};
 
 // void gc(VM* vm) {
 // TODO: see http://en.wikipedia.org/wiki/Cheney%27s_algorithm
@@ -55,15 +54,17 @@ typedef struct {
   size_t line_idx;
   const char* text;
   size_t length;
+  VM* vm;
 } LexState;
 
-LexState Lex_new(const char* text) {
+LexState Lex_new(const char* text, VM* vm) {
   LexState lexer = {
       .idx = 0,
       .line = 0,
       .line_idx = 0,
       .text = text,
       .length = strlen(text),
+      .vm = vm,
   };
   return lexer;
 }
@@ -142,7 +143,7 @@ Token* read_number(LexState* lex, int sign) {
   }
   memcpy(literal, lex->text + start, length);
 
-  Token* token = alloc(vm);
+  Token* token = alloc(lex->vm);
   if (dot_was_read) {
     double num = atof(literal) * sign;
     token->type = TFLOAT;
@@ -171,7 +172,30 @@ Token* read_minus(LexState* lex) {
   return NULL;
 }
 
-Token* read_expr(LexState* lex) {
+const Token* read_expr(LexState* lex);
+
+Token* read_list(LexState* lex) {
+  printf("reading list\n");
+  // (a b c d ...) == (a (b (c (d))))
+  Lex_next(lex);  // read first (
+  Token* res = alloc(lex->vm);
+  res->type = TLIST;
+  for (;;) {
+    const Token* tk = read_expr(lex);
+    if (tk == Cparen) {  // finally met a )
+      return res;
+    }
+    if (tk == NULL) {
+      // not closed (
+      fprintf(stderr, "Unclosed list at EOF %lu:%lud\n", lex->line, lex->line_idx);
+      return NULL;
+    }
+    // TODO: else do what? build a linked list?
+  }
+  return NULL;
+}
+
+const Token* read_expr(LexState* lex) {
   for (;;) {
     const char ch = Lex_peek(lex);
     switch (ch) {
@@ -203,6 +227,10 @@ Token* read_expr(LexState* lex) {
       case '8':
       case '9':
         return read_number(lex, 1);
+      case '(':
+        return read_list(lex);
+      case ')':
+        return Cparen;
       default:
         printf("UNKNOWN token: %c\n", ch);
         Lex_next(lex);
@@ -212,6 +240,10 @@ Token* read_expr(LexState* lex) {
 }
 
 void print_token(const Token* token) {
+  if (!token) {
+    printf("nil\n");
+    return;
+  }
   switch (token->type) {
     case TINT:
       printf("%ld\n", token->i_value);
@@ -223,12 +255,19 @@ void print_token(const Token* token) {
 }
 
 int main(void) {
-  vm->memory = malloc(MEMORY_SIZE);
+  VM vm = {
+      .offset = 0,
+      .memory = malloc(MEMORY_SIZE),
+  };
+  if (!vm.memory) {
+    fprintf(stderr, "Failed to allocate memory for VM\n");
+    exit(1);
+  }
   const char* text = "(+ 14  2\n  (* 3. 9.7) -1 -3.14)";
   printf("======\n%s\n======\n", text);
-  LexState lex = Lex_new(text);
+  LexState lex = Lex_new(text, &vm);
   print_token(read_expr(&lex));
-  free(vm->memory);
+  free(vm.memory);
 
   return 0;
 }
