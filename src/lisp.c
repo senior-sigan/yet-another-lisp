@@ -1,6 +1,8 @@
+#include <ctype.h>
 #include <readline/history.h>
 #include <readline/readline.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,9 +10,15 @@
 // The size of the heap in byte
 #define MEMORY_SIZE 65536
 
+const char symbol_chars[] = "*+-/:<=>";
+
+bool is_symbol_chars(char ch) {
+  return isalpha(ch) || strchr(symbol_chars, ch);
+}
+
 typedef struct {
   void* memory;
-  size_t offset;
+  size_t used;
 } VM;
 
 enum {
@@ -20,10 +28,12 @@ enum {
   TTRUE,
   TCPAREN,
   TCELL,
+  TSYMBOL,
 };
 
 typedef struct Token_ {
   int type;
+  size_t size;
   union {
     long i_value;
     double f_value;
@@ -31,6 +41,7 @@ typedef struct Token_ {
       struct Token_* car;
       struct Token_* cdr;
     };
+    char name[1];  // this array will be the token.size length! see alloc
   };
 } Token;
 
@@ -42,12 +53,26 @@ Token* const Cparen = &(Token){.type = TCPAREN};
 // TODO: see http://en.wikipedia.org/wiki/Cheney%27s_algorithm
 // }
 
-Token* alloc(VM* vm) {
-  size_t size = sizeof(Token);
-  // TODO: roundup and calculate size of the struct
+// Round up the given value to a multiple of size. Size must be a power of 2. It adds size - 1
+// first, then zero-ing the least significant bits to make the result a multiple of size. I know
+// these bit operations may look a little bit tricky, but it's efficient and thus frequently used.
+static inline size_t roundup(size_t var, size_t size) {
+  return (var + size - 1) & ~(size - 1);
+}
 
-  Token* token = (void*) ((char*) vm->memory + vm->offset);
-  vm->offset += size;
+Token* alloc(VM* vm, size_t size) {
+  size = roundup(size, sizeof(void*));
+  size += offsetof(Token, i_value);
+  size = roundup(size, sizeof(void*));
+
+  if (MEMORY_SIZE < vm->used + size) {
+    fprintf(stderr, "Memory exhausted");
+    return NULL;
+  }
+
+  Token* token = (Token*) ((char*) vm->memory + vm->used);
+  token->size = size;
+  vm->used += size;
 
   return token;
 }
@@ -91,6 +116,13 @@ char Lex_peek(const LexState* lex) {
   return lex->text[lex->idx];
 }
 
+char Lex_peek_next(const LexState* lex) {
+  if (lex->idx + 1 >= lex->length) {
+    return EOF;
+  }
+  return lex->text[lex->idx + 1];
+}
+
 void skip_line(LexState* lex) {
   for (;;) {
     const char ch = Lex_peek(lex);
@@ -105,11 +137,33 @@ void skip_line(LexState* lex) {
   }
 }
 
-bool is_space_like(char ch) {
-  return ch == ' ' || ch == '\t' || ch == '\f' || ch == '\v' || ch == '\n' || ch == '\r' || ch == EOF;
-}
-bool is_number(char ch) {
-  return ch >= '0' && ch <= '9';
+Token* read_symbol(LexState* lex) {
+  // 1. calculate symbol length
+  size_t start = lex->idx;
+  size_t end = start;
+  for (;;) {
+    const char ch = Lex_peek(lex);
+    bool allowed = isdigit(ch) || is_symbol_chars(ch);
+    if (!allowed) {
+      end = lex->idx;
+      break;
+    }
+    Lex_next(lex);
+  }
+  size_t length = end - start;
+  char* symbol_name = calloc(length + 1, sizeof(char));
+  if (!symbol_name) {
+    // TODO: handle mem alloc failure
+    fprintf(stderr, "Cannot allocate memory for symbol name\n");
+    return NULL;
+  }
+  memcpy(symbol_name, lex->text + start, length);
+  Token* token = alloc(lex->vm, length + 1);
+  token->type = TSYMBOL;
+  strcpy(token->name, symbol_name);
+  printf("SYM %s\n", symbol_name);
+  free(symbol_name);
+  return token;
 }
 
 Token* read_number(LexState* lex, int sign) {
@@ -118,7 +172,7 @@ Token* read_number(LexState* lex, int sign) {
   bool dot_was_read = false;
   for (;;) {
     const char ch = Lex_peek(lex);
-    if (is_number(ch)) {
+    if (isdigit(ch)) {
       // nothing to do
     } else if (ch == '.') {
       if (dot_was_read) {
@@ -127,7 +181,7 @@ Token* read_number(LexState* lex, int sign) {
       } else {
         dot_was_read = true;
       }
-    } else if (is_space_like(ch) || ch == ')' || ch == '(') {
+    } else if (isspace(ch) || ch == EOF || ch == ')' || ch == '(') {
       end = lex->idx;
       break;
     } else {
@@ -147,7 +201,7 @@ Token* read_number(LexState* lex, int sign) {
   }
   memcpy(literal, lex->text + start, length);
 
-  Token* token = alloc(lex->vm);
+  Token* token = alloc(lex->vm, sizeof(double));
   if (dot_was_read) {
     double num = atof(literal) * sign;
     token->type = TFLOAT;
@@ -167,18 +221,17 @@ Token* read_number(LexState* lex, int sign) {
 Token* read_minus(LexState* lex) {
   Lex_next(lex);
   char ch = Lex_peek(lex);
-  if (is_number(ch)) {
+  if (isdigit(ch)) {
     return read_number(lex, -1);
   }
-  // TODO: read minus operator
-  fprintf(stderr, "Minus operator is unsupported\n");
+  // impossible?
   return NULL;
 }
 
 Token* read_expr(LexState* lex);
 
 Token* cons(VM* vm, Token* car, Token* cdr) {
-  Token* cell = alloc(vm);
+  Token* cell = alloc(vm, sizeof(Token*) * 2);
   cell->type = TCELL;
   cell->car = car;
   cell->cdr = cdr;
@@ -194,6 +247,7 @@ Token* read_list(LexState* lex) {
   for (;;) {
     Token* tk = read_expr(lex);
     if (tk == Cparen) {  // finally met a )
+      Lex_next(lex);
       return res;
     }
     if (tk == NULL) {
@@ -208,7 +262,6 @@ Token* read_list(LexState* lex) {
       head->cdr = cons(lex->vm, tk, NULL);
       head = head->cdr;
     }
-    // cur = cons(lex->vm, cur, tk);
   }
   // impossible!!!
   return NULL;
@@ -234,7 +287,9 @@ Token* read_expr(LexState* lex) {
         skip_line(lex);
         break;
       case '-':
-        return read_minus(lex);
+        if (isdigit(Lex_peek_next(lex))) {
+          return read_minus(lex);
+        }  // otherwise it is an minus operator
       case '0':
       case '1':
       case '2':
@@ -251,9 +306,13 @@ Token* read_expr(LexState* lex) {
       case ')':
         return Cparen;
       default:
-        printf("UNKNOWN token: %c\n", ch);
-        Lex_next(lex);
-        return Nil;
+        if (is_symbol_chars(ch)) {
+          return read_symbol(lex);
+        } else {
+          printf("UNKNOWN token: %c\n", ch);
+          Lex_next(lex);
+          return Nil;
+        }
     }
   }
 }
@@ -280,23 +339,65 @@ void print_token(Token* token) {
       print_token(token->cdr);
       printf(")");
       break;
+    case TSYMBOL:
+      printf("%s", token->name);
+      break;
     default:
       fprintf(stderr, "???");
       break;
   }
 }
 
+Token* eval(LexState* lex, Token* token) {
+  if (!token) {
+    return NULL;
+  }
+  switch (token->type) {
+    case TCELL:
+      // TODO: eval list?
+      return NULL;
+    case TSYMBOL:
+      if (strcmp(token->name, "+")) {
+        double sum = 0;
+        // for (Token* args = eval_list(); args != NULL; args = args->cdr) {
+        //   if (args->car->type == TFLOAT) {
+        //     sum += args->car->f_value;
+        //   } else if (args->car->type == TINT) {
+        //     sum += args->car->i_value;
+        //   } else {
+        //     fprintf(stderr, "expected int or float got %s\n", args->car->type);
+        //     return NULL;
+        //   }
+        // }
+        Token* token = alloc(lex->vm, sizeof(double));
+        token->type = TFLOAT;
+        token->f_value = sum;
+        return token;
+      } else {
+        fprintf(stderr, "Unsupported symbol %s\n", token->name);
+        return NULL;
+      }
+      break;
+    default:
+      return token;
+      break;
+  }
+}
+
 int main(void) {
   VM vm = {
-      .offset = 0,
+      .used = 0,
       .memory = malloc(MEMORY_SIZE),
   };
   if (!vm.memory) {
     fprintf(stderr, "Failed to allocate memory for VM\n");
     exit(1);
   }
-  const char* text = "(+ 14  2\n  (* 3. 9.7) -1 -3.14)";
+  // const char* text = "(print (+ 14  2 (* 3 9.7) -1 -3.14))";
   // const char* text = "(1 2 3 4 5 6)";
+  // const char* text = "(print -42)";
+  // const char* text = "(* (+ 1 2) 3)";
+  const char* text = "(+ 1 2 3)";
   printf("======\n%s\n======\n", text);
   LexState lex = Lex_new(text, &vm);
   print_token(read_expr(&lex));
