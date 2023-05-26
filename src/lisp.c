@@ -10,6 +10,10 @@
 // The size of the heap in byte
 #define MEMORY_SIZE 65536
 
+// https://stackoverflow.com/questions/1701055/what-is-the-maximum-length-in-chars-needed-to-represent-any-double-value
+// a buffer to store a double/long numbers for atoi and atof functions
+static char number_buffer[1079];
+
 const char symbol_chars[] = "*+-/:<=>";
 
 bool is_symbol_chars(char ch) {
@@ -164,12 +168,13 @@ Token* read_symbol(LexState* lex) {
 }
 
 Token* read_number(LexState* lex, int sign) {
-  size_t start = lex->idx;
-  size_t end = start;
   bool dot_was_read = false;
+  size_t i = 0;
   for (;;) {
     const char ch = Lex_peek(lex);
     if (isdigit(ch)) {
+      number_buffer[i] = ch;
+      i++;
       // nothing to do
     } else if (ch == '.') {
       if (dot_was_read) {
@@ -179,7 +184,6 @@ Token* read_number(LexState* lex, int sign) {
         dot_was_read = true;
       }
     } else if (isspace(ch) || ch == EOF || ch == ')' || ch == '(') {
-      end = lex->idx;
       break;
     } else {
       // TODO: add exponential parsing 1e12, 1e-2, 1e+2, 1.2e+3
@@ -189,33 +193,22 @@ Token* read_number(LexState* lex, int sign) {
     Lex_next(lex);
   }
 
-  size_t length = end - start;
-  // TODO: we can avoid heap allocation and use stack array
-  //  of size 256 for example, because we cannot handle such big numbers.
-  char* literal = malloc((length + 1) * sizeof(char));
-  if (!literal) {
-    // TODO: handle mem alloc failure
-    fprintf(stderr, "Cannot allocate memory for literal\n");
-    return NULL;
-  }
-  strncpy(literal, lex->text + start, length);
-  literal[length] = '\0';
+  number_buffer[i] = '\0';
 
   Token* token;
   if (dot_was_read) {
     token = alloc(lex->vm, sizeof(double));
-    double num = atof(literal) * sign;
+    double num = atof(number_buffer) * sign;
     token->type = TFLOAT;
     token->f_value = num;
     printf("[DEBUG] FLOAT %lf\n", num);
   } else {
     token = alloc(lex->vm, sizeof(long));
-    long num = atol(literal) * sign;
+    long num = atol(number_buffer) * sign;
     token->type = TINT;
     token->i_value = num;
     printf("[DEBUG] INT %ld\n", num);
   }
-  free(literal);
 
   return token;
 }
