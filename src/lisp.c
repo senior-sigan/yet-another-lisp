@@ -173,8 +173,6 @@ Token* read_number(LexState* lex, int sign) {
   for (;;) {
     const char ch = Lex_peek(lex);
     if (isdigit(ch)) {
-      number_buffer[i] = ch;
-      i++;
       // nothing to do
     } else if (ch == '.') {
       if (dot_was_read) {
@@ -190,6 +188,7 @@ Token* read_number(LexState* lex, int sign) {
       fprintf(stderr, "Syntax error at %lu:%lu %c\n", lex->line, lex->line_idx, ch);
       return NULL;  // TODO: return parsing error token?
     }
+    number_buffer[i++] = ch;
     Lex_next(lex);
   }
 
