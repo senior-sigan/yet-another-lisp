@@ -29,6 +29,7 @@ enum {
   TCPAREN,
   TCELL,
   TSYMBOL,
+  TSTRING,
 };
 
 typedef struct Token_ {
@@ -145,6 +146,7 @@ Token* read_symbol(LexState* lex) {
     const char ch = Lex_peek(lex);
     bool allowed = isdigit(ch) || is_symbol_chars(ch);
     if (!allowed) {
+      // TODO: check for a space-like character to stop parsing
       end = lex->idx;
       break;
     }
@@ -161,7 +163,7 @@ Token* read_symbol(LexState* lex) {
   Token* token = alloc(lex->vm, length + 1);
   token->type = TSYMBOL;
   strcpy(token->name, symbol_name);
-  printf("SYM %s\n", symbol_name);
+  printf("[DEBUG] SYM %s\n", symbol_name);
   free(symbol_name);
   return token;
 }
@@ -201,17 +203,19 @@ Token* read_number(LexState* lex, int sign) {
   }
   memcpy(literal, lex->text + start, length);
 
-  Token* token = alloc(lex->vm, sizeof(double));
+  Token* token;
   if (dot_was_read) {
+    token = alloc(lex->vm, sizeof(double));
     double num = atof(literal) * sign;
     token->type = TFLOAT;
     token->f_value = num;
-    printf("FLOAT %lf\n", num);
+    printf("[DEBUG] FLOAT %lf\n", num);
   } else {
+    token = alloc(lex->vm, sizeof(long));
     long num = atol(literal) * sign;
     token->type = TINT;
     token->i_value = num;
-    printf("INT %ld\n", num);
+    printf("[DEBUG] INT %ld\n", num);
   }
   free(literal);
 
@@ -238,9 +242,43 @@ Token* cons(VM* vm, Token* car, Token* cdr) {
   return cell;
 }
 
+Token* read_string(LexState* lex) {
+  Lex_next(lex);  // read first "
+  // 1. calculate string length
+  size_t start = lex->idx;
+  size_t end = start;
+  for (;;) {
+    const char ch = Lex_peek(lex);
+    if (ch == '"') {
+      end = lex->idx;
+      Lex_next(lex);
+      break;
+    }
+    if (ch == EOF) {
+      fprintf(stderr, "Unclosed string at %lu:%lu\n", lex->line, lex->line_idx);
+      return NULL;
+    }
+    Lex_next(lex);
+  }
+  size_t length = end - start;
+  char* str = calloc(length + 1, sizeof(char));
+  if (!str) {
+    // TODO: handle mem alloc failure
+    fprintf(stderr, "Cannot allocate memory for string\n");
+    return NULL;
+  }
+  memcpy(str, lex->text + start, length);
+  Token* token = alloc(lex->vm, length + 1);
+  token->type = TSTRING;
+  strcpy(token->name, str);
+  printf("[DEBUG] STR %s\n", str);
+  free(str);
+  return token;
+}
+
 Token* read_list(LexState* lex) {
-  printf("reading list\n");
-  // (a b c d ...) == (a (b (c (d))))
+  printf("[DEBUG] reading list\n");
+  // (a b c d ...) == (a (b (c (d nil))))
   Lex_next(lex);  // read first (
   Token* head = NULL;
   Token* res = head;
@@ -305,6 +343,8 @@ Token* read_expr(LexState* lex) {
         return read_list(lex);
       case ')':
         return Cparen;
+      case '"':
+        return read_string(lex);
       default:
         if (is_symbol_chars(ch)) {
           return read_symbol(lex);
@@ -341,6 +381,9 @@ void print_token(Token* token) {
       break;
     case TSYMBOL:
       printf("%s", token->name);
+      break;
+    case TSTRING:
+      printf("\"%s\"", token->name);
       break;
     default:
       fprintf(stderr, "???");
@@ -397,7 +440,8 @@ int main(void) {
   // const char* text = "(1 2 3 4 5 6)";
   // const char* text = "(print -42)";
   // const char* text = "(* (+ 1 2) 3)";
-  const char* text = "(+ 1 2 3)";
+  // const char* text = "(+ 1 2 3)";
+  const char* text = "(let hello \"world\" a 42)";
   printf("======\n%s\n======\n", text);
   LexState lex = Lex_new(text, &vm);
   print_token(read_expr(&lex));
