@@ -25,7 +25,7 @@ enum {
   TNIL = 0,
   TINT = 1,
   TFLOAT,
-  TTRUE,
+  TBOOL,
   TCPAREN,
   TCELL,
   TSYMBOL,
@@ -36,6 +36,7 @@ typedef struct Token_ {
   int type;
   size_t size;
   union {
+    bool b_value;
     long i_value;
     double f_value;
     struct {
@@ -46,7 +47,8 @@ typedef struct Token_ {
   };
 } Token;
 
-Token* const True = &(Token){.type = TTRUE};
+Token* const True = &(Token){.type = TBOOL, .b_value = true};
+Token* const False = &(Token){.type = TBOOL, .b_value = false};
 Token* const Nil = &(Token){.type = TNIL};
 Token* const Cparen = &(Token){.type = TCPAREN};
 
@@ -153,18 +155,11 @@ Token* read_symbol(LexState* lex) {
     Lex_next(lex);
   }
   size_t length = end - start;
-  char* symbol_name = calloc(length + 1, sizeof(char));
-  if (!symbol_name) {
-    // TODO: handle mem alloc failure
-    fprintf(stderr, "Cannot allocate memory for symbol name\n");
-    return NULL;
-  }
-  memcpy(symbol_name, lex->text + start, length);
   Token* token = alloc(lex->vm, length + 1);
   token->type = TSYMBOL;
-  strcpy(token->name, symbol_name);
-  printf("[DEBUG] SYM %s\n", symbol_name);
-  free(symbol_name);
+  strncpy(token->name, lex->text + start, length);
+  token->name[length] = '\0';
+  printf("[DEBUG] SYM %s\n", token->name);
   return token;
 }
 
@@ -195,13 +190,16 @@ Token* read_number(LexState* lex, int sign) {
   }
 
   size_t length = end - start;
-  char* literal = calloc(length + 1, sizeof(char));
+  // TODO: we can avoid heap allocation and use stack array
+  //  of size 256 for example, because we cannot handle such big numbers.
+  char* literal = malloc((length + 1) * sizeof(char));
   if (!literal) {
     // TODO: handle mem alloc failure
     fprintf(stderr, "Cannot allocate memory for literal\n");
     return NULL;
   }
-  memcpy(literal, lex->text + start, length);
+  strncpy(literal, lex->text + start, length);
+  literal[length] = '\0';
 
   Token* token;
   if (dot_was_read) {
@@ -261,18 +259,11 @@ Token* read_string(LexState* lex) {
     Lex_next(lex);
   }
   size_t length = end - start;
-  char* str = calloc(length + 1, sizeof(char));
-  if (!str) {
-    // TODO: handle mem alloc failure
-    fprintf(stderr, "Cannot allocate memory for string\n");
-    return NULL;
-  }
-  memcpy(str, lex->text + start, length);
   Token* token = alloc(lex->vm, length + 1);
   token->type = TSTRING;
-  strcpy(token->name, str);
-  printf("[DEBUG] STR %s\n", str);
-  free(str);
+  strncpy(token->name, lex->text + start, length);
+  token->name[length] = '\0';
+  printf("[DEBUG] STR %s\n", token->name);
   return token;
 }
 
@@ -427,7 +418,7 @@ Token* eval(LexState* lex, Token* token) {
   }
 }
 
-int main(void) {
+void execute(const char* text) {
   VM vm = {
       .used = 0,
       .memory = malloc(MEMORY_SIZE),
@@ -436,16 +427,18 @@ int main(void) {
     fprintf(stderr, "Failed to allocate memory for VM\n");
     exit(1);
   }
-  // const char* text = "(print (+ 14  2 (* 3 9.7) -1 -3.14))";
-  // const char* text = "(1 2 3 4 5 6)";
-  // const char* text = "(print -42)";
-  // const char* text = "(* (+ 1 2) 3)";
-  // const char* text = "(+ 1 2 3)";
-  const char* text = "(let hello \"world\" a 42)";
   printf("======\n%s\n======\n", text);
   LexState lex = Lex_new(text, &vm);
   print_token(read_expr(&lex));
   free(vm.memory);
+}
+
+int main(void) {
+  execute("(+ 1 2 3 4 5 6)");
+  execute("(* (+ 1 2) 3)");
+  execute("(print (+ 14  2 (* 3 9.7) -1 -3.14))");
+  execute("(print -42)");
+  execute("(let hello \"world\" a 42)");
 
   return 0;
 }
