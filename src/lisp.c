@@ -264,12 +264,12 @@ Token* read_list(LexState* lex) {
   // (a b c d ...) == (a (b (c (d nil))))
   Lex_next(lex);  // read first (
   Token* head = NULL;
-  Token* res = head;
+  Token* tail = NULL;
   for (;;) {
     Token* tk = read_expr(lex);
     if (tk == Cparen) {  // finally met a )
       Lex_next(lex);
-      return res;
+      return head;
     }
     if (tk == NULL) {
       // not closed (
@@ -278,10 +278,10 @@ Token* read_list(LexState* lex) {
     }
     if (!head) {
       head = cons(lex->vm, tk, NULL);
-      res = head;
+      tail = head;
     } else {
-      head->cdr = cons(lex->vm, tk, NULL);
-      head = head->cdr;
+      tail->cdr = cons(lex->vm, tk, NULL);
+      tail = tail->cdr;
     }
   }
   // impossible!!!
