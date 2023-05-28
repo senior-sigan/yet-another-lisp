@@ -34,7 +34,11 @@ enum {
   TCELL,
   TSYMBOL,
   TSTRING,
+  TFUNCTION,
 };
+
+struct Token_;
+typedef struct Token_* Func(VM* vm, struct Token_* args);
 
 typedef struct Token_ {
   int type;
@@ -43,6 +47,7 @@ typedef struct Token_ {
     bool b_value;
     long i_value;
     double f_value;
+    Func* fun;
     struct {
       struct Token_* car;
       struct Token_* cdr;
@@ -55,6 +60,12 @@ Token* const True = &(Token){.type = TBOOL, .b_value = true};
 Token* const False = &(Token){.type = TBOOL, .b_value = false};
 Token* const Nil = &(Token){.type = TNIL};
 Token* const Cparen = &(Token){.type = TCPAREN};
+
+Token* add(VM* vm, Token* args) {
+  return NULL;
+}
+
+Token* const Add = &(Token){.type = TFUNCTION, .fun = add};
 
 // void gc(VM* vm) {
 // TODO: see http://en.wikipedia.org/wiki/Cheney%27s_algorithm
@@ -358,7 +369,7 @@ void print_token(Token* token) {
     case TCELL:
       printf("(");
       print_token(token->car);
-      printf(" ");
+      printf(" . ");
       print_token(token->cdr);
       printf(")");
       break;
@@ -374,36 +385,60 @@ void print_token(Token* token) {
   }
 }
 
-Token* eval(LexState* lex, Token* token) {
+Token* find(VM* vm, const char* symbol) {
+  if (strcmp(symbol, "+")) {
+    return Add;
+  }
+  return NULL;
+}
+
+Token* eval(VM* vm, Token* token);
+
+/**
+ * Apply function with arguments.
+ * args is a con of arguments.
+ */
+Token* apply(VM* vm, Token* fun, Token* args) {
+  // TODO: iterate over args and apply fun like reduce?
+  return NULL;
+}
+
+/**
+ * Expecting the CAR to be a function identifier
+ * and CDR to be a list of arguments.
+ */
+Token* eval_cell(VM* vm, Token* token) {
+  Token* sym = token->car;
+  Token* args = token->cdr;
+  if (sym->type != TSYMBOL) {
+    fprintf(stderr, "[ERROR] expected a function name, got %d:\n\t", sym->type);
+    print_token(sym);
+    printf("\n");
+
+    return NULL;
+  }
+
+  Token* fn = find(vm, sym->name);
+  if (fn->type != TFUNCTION) {
+    fprintf(stderr, "[ERROR] expected a function, got %d:\n\t", fn->type);
+    print_token(fn);
+    printf("\n");
+  }
+
+  return apply(vm, fn, args);
+}
+
+Token* eval(VM* vm, Token* token) {
   if (!token) {
     return NULL;
   }
   switch (token->type) {
     case TCELL:
-      // TODO: eval list?
-      return NULL;
+      return eval_cell(vm, token);
     case TSYMBOL:
-      if (strcmp(token->name, "+")) {
-        double sum = 0;
-        // for (Token* args = eval_list(); args != NULL; args = args->cdr) {
-        //   if (args->car->type == TFLOAT) {
-        //     sum += args->car->f_value;
-        //   } else if (args->car->type == TINT) {
-        //     sum += args->car->i_value;
-        //   } else {
-        //     fprintf(stderr, "expected int or float got %s\n", args->car->type);
-        //     return NULL;
-        //   }
-        // }
-        Token* token = alloc(lex->vm, sizeof(double));
-        token->type = TFLOAT;
-        token->f_value = sum;
-        return token;
-      } else {
-        fprintf(stderr, "Unsupported symbol %s\n", token->name);
-        return NULL;
-      }
-      break;
+      // TODO: find token->name in the environment and return it
+      fprintf(stderr, "Unsupported symbol %s\n", token->name);
+      return NULL;
     default:
       return token;
       break;
@@ -421,16 +456,17 @@ void execute(const char* text) {
   }
   printf("======\n%s\n======\n", text);
   LexState lex = Lex_new(text, &vm);
-  print_token(read_expr(&lex));
+  eval(lex.vm, read_expr(&lex));
   free(vm.memory);
 }
 
 int main(void) {
+  execute("(1 2 3 4 5)");
   execute("(+ 1 2 3 4 5 6)");
-  execute("(* (+ 1 2) 3)");
-  execute("(print (+ 14  2 (* 3 9.7) -1 -3.14))");
-  execute("(print -42)");
-  execute("(let hello \"world\" a 42)");
+  // execute("(* (+ 1 2) 3)");
+  // execute("(print (+ 14  2 (* 3 9.7) -1 -3.14))");
+  // execute("(print -42)");
+  // execute("(let hello \"world\" a 42)");
 
   return 0;
 }
